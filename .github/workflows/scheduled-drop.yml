@@ -1,0 +1,59 @@
+name: Scheduled Drop Release
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check and apply scheduled drop
+        run: |
+          python3 - << 'EOF'
+          import json, datetime, os, sys
+
+          with open('drop-schedule.json', encoding='utf-8') as f:
+              cfg = json.load(f)
+
+          if cfg.get('applied', True) or not cfg.get('scheduled_at') or not cfg.get('source_file'):
+              print("Nothing to do.")
+              sys.exit(0)
+
+          scheduled = datetime.datetime.fromisoformat(cfg['scheduled_at'].replace('Z', '+00:00'))
+          now = datetime.datetime.now(datetime.timezone.utc)
+
+          if now < scheduled:
+              print(f"Not yet time. Scheduled: {scheduled}, now: {now}")
+              sys.exit(0)
+
+          src = cfg['source_file']
+          if not os.path.exists(src):
+              print(f"Source file {src} not found!")
+              sys.exit(1)
+
+          with open(src, 'rb') as f:
+              content = f.read()
+          with open('index.html', 'wb') as f:
+              f.write(content)
+
+          cfg['applied'] = True
+          with open('drop-schedule.json', 'w', encoding='utf-8') as f:
+              json.dump(cfg, f, indent=2, ensure_ascii=False)
+
+          print("Drop applied.")
+          EOF
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index.html drop-schedule.json
+          git diff --cached --quiet || git commit -m "Auto-release scheduled drop"
+          git diff --cached --quiet || git push  
